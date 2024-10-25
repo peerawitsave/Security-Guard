@@ -14,21 +14,25 @@ RUN_SPEED = 3
 GUARD_PATROL_INTERVAL = 3000
 CHASE_LOST_TIME = 3000
 WALL_COLOR = (139, 69, 19)
+FRAME_RATE = 0.1
 
 pygame.init()
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 manager = pygame_gui.UIManager((WIDTH, HEIGHT))
 pygame.display.set_caption("Robbery Bob - Sneak Out Game")
 
-# Define walls for a better map layout
+background_img = pygame.image.load('assets/cement.jpg').convert()
+orc_sprite_sheet = pygame.image.load('./assets/Orc.png').convert_alpha()
+
+GUARD_SPRITE_SIZE = (100, 100)
+guard_sprites = [pygame.transform.scale(orc_sprite_sheet.subsurface(pygame.Rect(i * GUARD_SPRITE_SIZE[0], 0, GUARD_SPRITE_SIZE[0], GUARD_SPRITE_SIZE[1])), (200, 200)) for i in range(6)]
+
 walls = [
-    # Outer boundaries
     pygame.Rect(50, 50, 1100, 20),
     pygame.Rect(50, 730, 1100, 20),
     pygame.Rect(50, 50, 20, 700),
     pygame.Rect(1130, 50, 20, 700),
 
-    # Inner maze-like walls
     pygame.Rect(100, 100, 20, 200),
     pygame.Rect(150, 100, 300, 20),
     pygame.Rect(450, 100, 20, 150),
@@ -112,13 +116,13 @@ class PatrolState(State):
         
         agent.position += agent.velocity
 
-        # Collision detection with walls
+        # Collision
         for wall in walls:
             if wall.colliderect(pygame.Rect(agent.position.x - 5, agent.position.y - 5, 10, 10)):
                 agent.position -= agent.velocity
                 break
 
-        # transition that could change to other stages
+
         if self.can_see_target(agent, target) and (target - agent.position).length() <= 150:
             print('Player detected, switching to chase state')
             agent.last_known_position = target
@@ -167,7 +171,6 @@ class PatrolState(State):
         return neighbors
 
     def can_see_target(self, agent, target):
-        # Check if there is a clear line of sight between the agent and the target
         direction = (target - agent.position).normalize()
         steps = int(min((target - agent.position).length(), 150) / 10)
         for i in range(steps):
@@ -183,13 +186,12 @@ class ChaseState(State):
 
     def update(self, agent, target, noise_position):
         if (target - agent.position).length() > 5:
-            direction = (target - agent.position).normalize() * (MAX_SPEED * 0.4)
+            direction = (target - agent.position).normalize() * (MAX_SPEED * 1.3)
         else:
             direction = pygame.Vector2(0, 0)
         agent.velocity = direction
         agent.position += agent.velocity
 
-        # Improved collision detection and correction with walls
         for wall in walls:
             if wall.colliderect(pygame.Rect(agent.position.x - 5, agent.position.y - 5, 10, 10)):
                 if abs(agent.velocity.x) > abs(agent.velocity.y):
@@ -198,24 +200,7 @@ class ChaseState(State):
                     agent.position.y -= agent.velocity.y
                 agent.velocity = pygame.Vector2(0, 0)
                 break
-        agent.velocity = direction
-        agent.position += agent.velocity
 
-        # Collision detection with walls
-        for wall in walls:
-            if wall.collidepoint(agent.position.x, agent.position.y):
-                agent.position -= agent.velocity
-                break
-        agent.velocity = direction
-        agent.position += agent.velocity
-
-        # Collision detection with walls
-        for wall in walls:
-            if wall.collidepoint(agent.position.x, agent.position.y):
-                agent.position -= agent.velocity
-                break
-
-        # transition that could change to other stages
         dist = (target - agent.position).length()
         if dist >= 150:
             current_time = pygame.time.get_ticks()
@@ -233,7 +218,6 @@ class AtkState(State):
         agent.velocity *= 0
 
     def update(self, agent, target, noise_position):
-        # transition that could change to other stages
         dist = (target - agent.position).length()
         if dist > 10:
             return 'chase'
@@ -254,7 +238,6 @@ class InvestigateState(State):
         agent.velocity = direction * MAX_SPEED
         agent.position += agent.velocity
 
-        # Improved collision detection and correction with walls
         for wall in walls:
             if wall.colliderect(pygame.Rect(agent.position.x - 5, agent.position.y - 5, 10, 10)):
                 if abs(agent.velocity.x) > abs(agent.velocity.y):
@@ -268,13 +251,11 @@ class InvestigateState(State):
         agent.velocity = direction * MAX_SPEED
         agent.position += agent.velocity
 
-        # Collision detection with walls
         for wall in walls:
             if wall.collidepoint(agent.position.x, agent.position.y):
                 agent.position -= agent.velocity
                 break
 
-        # Transition
         current_time = pygame.time.get_ticks()
         if current_time - agent.investigate_timer > GUARD_PATROL_INTERVAL:
             return 'patrol'
@@ -287,7 +268,6 @@ class AlertingState(State):
         pass
 
     def update(self, agent, target, noise_position):
-        # Alert for a certain time and then return to patrol
         return 'patrol'
 
     def exit(self, agent):
@@ -314,13 +294,15 @@ class Agent:
         self.patrol_points = patrol_points
         self.state_machine = StateMachine()
         self.last_known_position = None
+        self.animation_index = 0
 
     def update(self, target, noise_position):
         if noise_position:
             self.last_known_position = noise_position
         self.state_machine.update(self, target, noise_position)
 
-        # Warp around
+        self.animation_index = (self.animation_index + FRAME_RATE) % len(guard_sprites)
+
         if self.position.x > WIDTH:
             self.position.x = 0
         elif self.position.x < 0:
@@ -333,34 +315,38 @@ class Agent:
         return True
 
     def draw(self, screen):
-        pygame.draw.circle(screen, (0, 0, 255), (int(self.position.x), int(self.position.y)), 10)
-        # Draw guard vision cone
+        current_sprite = guard_sprites[int(self.animation_index)]
+        if self.velocity.x < 0:
+            current_sprite = pygame.transform.flip(current_sprite, True, False)
+        screen.blit(current_sprite, (int(self.position.x) - GUARD_SPRITE_SIZE[0], int(self.position.y) - GUARD_SPRITE_SIZE[1]))
         cone_length = 150
         cone_angle = math.pi / 4
         direction = self.velocity.normalize() if self.velocity.length() > 0 else pygame.Vector2(1, 0)
         left_cone = direction.rotate_rad(-cone_angle) * cone_length
         right_cone = direction.rotate_rad(cone_angle) * cone_length
 
-        # Set cone color based on guard state
         if self.state_machine.curret_state == 'patrol':
-            cone_color = (0, 255, 0, 10)  # Green
+            cone_color = (0, 255, 0, 100)  # Green
         elif self.state_machine.curret_state in ['alerting', 'investigate']:
-            cone_color = (255, 255, 0, 10)  # Yellow
+            cone_color = (255, 255, 0, 100)  # Yellow
         elif self.state_machine.curret_state == 'chase':
-            cone_color = (255, 0, 0, 10)  # Red
+            cone_color = (255, 0, 0, 100)  # Red
 
-        pygame.draw.polygon(screen, cone_color, [
+        vision_surface = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        pygame.draw.polygon(vision_surface, cone_color, [
             (self.position.x, self.position.y),
             (self.position.x + left_cone.x, self.position.y + left_cone.y),
             (self.position.x + right_cone.x, self.position.y + right_cone.y)
-        ], 1)
-        
+        ])
+        screen.blit(vision_surface, (0, 0))
+
 
 class Player:
     def __init__(self):
         self.position = pygame.Vector2(100, 100)
         self.speed = PLAYER_SPEED
         self.noise_position = None
+        self.collectibles_collected = 0
 
     def update(self):
         keys = pygame.key.get_pressed()
@@ -385,14 +371,22 @@ class Player:
             velocity = velocity.normalize() * self.speed
             self.position += velocity
 
-        # Collision detection with walls
         for wall in walls:
             if wall.collidepoint(self.position.x, self.position.y):
                 self.position -= velocity
                 break
 
     def draw(self, screen):
-        pygame.draw.circle(screen, (255, 0, 0), (int(self.position.x), int(self.position.y)), 10)
+        pygame.draw.circle(screen, (0, 0, 255), (int(self.position.x), int(self.position.y)), 10)
+
+
+class Collectible:
+    def __init__(self):
+        self.position = pygame.Vector2(random.randint(50, WIDTH - 50), random.randint(50, HEIGHT - 50))
+
+    def draw(self, screen):
+        pygame.draw.circle(screen, (255, 215, 0), (int(self.position.x), int(self.position.y)), 8)
+
 
 def main():
     guard1_patrol_points = [pygame.Vector2(150, 150), pygame.Vector2(300, 150), pygame.Vector2(150, 400), pygame.Vector2(150, 700)]
@@ -403,12 +397,13 @@ def main():
     guard6_patrol_points = [pygame.Vector2(600, 300), pygame.Vector2(800, 500), pygame.Vector2(400, 500), pygame.Vector2(600, 300)]
     agents = [Agent(guard1_patrol_points), Agent(guard2_patrol_points), Agent(guard3_patrol_points), Agent(guard5_patrol_points), Agent(guard6_patrol_points)]
     player = Player()
+    collectible = Collectible()
     clock = pygame.time.Clock()
 
     running = True
     while running:
         time_delta = clock.tick(60) / 1000.0
-        screen.fill((100, 100, 100))
+        screen.blit(background_img, (0, 0))  # Draw the background
         manager.update(time_delta)
 
         for event in pygame.event.get():
@@ -416,7 +411,6 @@ def main():
                 running = False
             manager.process_events(event)
 
-        # Draw the map
         for wall in walls:
             pygame.draw.rect(screen, WALL_COLOR, wall)
 
@@ -424,9 +418,19 @@ def main():
         for agent in agents:
             agent.update(player.position, player.noise_position)
 
+        if (player.position - collectible.position).length() < 15:
+            player.collectibles_collected += 1
+            collectible = Collectible()
+
         player.draw(screen)
         for agent in agents:
             agent.draw(screen)
+
+        collectible.draw(screen)
+
+        font = pygame.font.SysFont(None, 36)
+        text_surface = font.render(f'Collectibles: {player.collectibles_collected}', True, (255, 255, 255))
+        screen.blit(text_surface, (10, 10))
 
         manager.draw_ui(screen)
         pygame.display.flip()
